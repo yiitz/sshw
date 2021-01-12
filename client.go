@@ -11,9 +11,12 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/mitchellh/ioprogress"
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
 )
@@ -38,7 +41,9 @@ var (
 )
 
 type Client interface {
-	Login()
+	Shell()
+	SendFile(srcPath string, destPath string)
+	GetFile(srcPath string, destPath string)
 }
 
 type defaultClient struct {
@@ -128,60 +133,67 @@ func NewClient(node *Node) Client {
 	return genSSHConfig(node)
 }
 
-func (c *defaultClient) Login() {
-	host := c.node.Host
-	port := strconv.Itoa(c.node.port())
-	jNodes := c.node.Jump
+func (c *defaultClient) GetFile(srcPath string, destPath string) {
+}
 
-	var client *ssh.Client
-
-	if len(jNodes) > 0 {
-		jNode := jNodes[0]
-		jc := genSSHConfig(jNode)
-		proxyClient, err := ssh.Dial("tcp", net.JoinHostPort(jNode.Host, strconv.Itoa(jNode.port())), jc.clientConfig)
-		if err != nil {
-			l.Error(err)
-			return
-		}
-		conn, err := proxyClient.Dial("tcp", net.JoinHostPort(host, port))
-		if err != nil {
-			l.Error(err)
-			return
-		}
-		ncc, chans, reqs, err := ssh.NewClientConn(conn, net.JoinHostPort(host, port), c.clientConfig)
-		if err != nil {
-			l.Error(err)
-			return
-		}
-		client = ssh.NewClient(ncc, chans, reqs)
-	} else {
-		client1, err := ssh.Dial("tcp", net.JoinHostPort(host, port), c.clientConfig)
-		client = client1
-		if err != nil {
-			msg := err.Error()
-			// use terminal password retry
-			if strings.Contains(msg, "no supported methods remain") && !strings.Contains(msg, "password") {
-				fmt.Printf("%s@%s's password:", c.clientConfig.User, host)
-				var b []byte
-				b, err = terminal.ReadPassword(int(syscall.Stdin))
-				if err == nil {
-					p := string(b)
-					if p != "" {
-						c.clientConfig.Auth = append(c.clientConfig.Auth, ssh.Password(p))
-					}
-					fmt.Println()
-					client, err = ssh.Dial("tcp", net.JoinHostPort(host, port), c.clientConfig)
-				}
-			}
-		}
-		if err != nil {
-			l.Error(err)
-			return
-		}
+func (c *defaultClient) SendFile(srcPath string, destPath string) {
+	client := c.Connect()
+	if client == nil {
+		return
 	}
 	defer client.Close()
 
-	l.Infof("connect server ssh -p %d %s@%s version: %s\n", c.node.port(), c.node.user(), host, string(client.ServerVersion()))
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	if destPath == "" {
+		destPath = "/root/sshwtmp"
+	}
+
+	// open an SFTP session over an existing ssh connection.
+	sftp, err := sftp.NewClient(client)
+	if err != nil {
+		l.Error(err)
+		return
+	}
+	defer sftp.Close()
+
+	// Open the source file
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		l.Error(err)
+		return
+	}
+	defer srcFile.Close()
+	fi, _ := os.Stat(srcPath)
+
+	// Create the destination file
+	dstFile, err := sftp.Create(destPath)
+	if err != nil {
+		l.Error(err)
+		return
+	}
+	defer dstFile.Close()
+
+	progressR := &ioprogress.Reader{
+		Reader:       srcFile,
+		Size:         fi.Size(),
+		DrawFunc:     ioprogress.DrawTerminalf(os.Stdout, ioprogress.DrawTextFormatBytes),
+		DrawInterval: time.Second,
+	}
+
+	// Copy all of the reader to some local file f. As it copies, the
+	// progressR will write progress to the terminal on os.Stdout. This is
+	// customizable.
+	io.Copy(dstFile, progressR)
+}
+
+func (c *defaultClient) Shell() {
+	client := c.Connect()
+	if client == nil {
+		return
+	}
+	defer client.Close()
 
 	session, err := client.NewSession()
 	if err != nil {
@@ -277,4 +289,59 @@ func (c *defaultClient) Login() {
 	}()
 
 	session.Wait()
+}
+
+func (c *defaultClient) Connect() *ssh.Client {
+	host := c.node.Host
+	port := strconv.Itoa(c.node.port())
+	jNodes := c.node.Jump
+
+	var client *ssh.Client
+
+	if len(jNodes) > 0 {
+		jNode := jNodes[0]
+		jc := genSSHConfig(jNode)
+		proxyClient, err := ssh.Dial("tcp", net.JoinHostPort(jNode.Host, strconv.Itoa(jNode.port())), jc.clientConfig)
+		if err != nil {
+			l.Error(err)
+			return nil
+		}
+		conn, err := proxyClient.Dial("tcp", net.JoinHostPort(host, port))
+		if err != nil {
+			l.Error(err)
+			return nil
+		}
+		ncc, chans, reqs, err := ssh.NewClientConn(conn, net.JoinHostPort(host, port), c.clientConfig)
+		if err != nil {
+			l.Error(err)
+			return nil
+		}
+		client = ssh.NewClient(ncc, chans, reqs)
+	} else {
+		client1, err := ssh.Dial("tcp", net.JoinHostPort(host, port), c.clientConfig)
+		client = client1
+		if err != nil {
+			msg := err.Error()
+			// use terminal password retry
+			if strings.Contains(msg, "no supported methods remain") && !strings.Contains(msg, "password") {
+				fmt.Printf("%s@%s's password:", c.clientConfig.User, host)
+				var b []byte
+				b, err = terminal.ReadPassword(int(syscall.Stdin))
+				if err == nil {
+					p := string(b)
+					if p != "" {
+						c.clientConfig.Auth = append(c.clientConfig.Auth, ssh.Password(p))
+					}
+					fmt.Println()
+					client, err = ssh.Dial("tcp", net.JoinHostPort(host, port), c.clientConfig)
+				}
+			}
+		}
+		if err != nil {
+			l.Error(err)
+			return nil
+		}
+	}
+	l.Infof("connect server ssh -p %d %s@%s version: %s\n", c.node.port(), c.node.user(), host, string(client.ServerVersion()))
+	return client
 }

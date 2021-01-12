@@ -14,10 +14,14 @@ import (
 const prev = "-parent-"
 
 var (
-	Build = "devel"
-	V     = flag.Bool("version", false, "show version")
-	H     = flag.Bool("help", false, "show help")
-	S     = flag.Bool("s", false, "use local ssh config '~/.ssh/config'")
+	Build  = "devel"
+	V      = flag.Bool("version", false, "show version")
+	H      = flag.Bool("help", false, "show help")
+	S      = flag.Bool("s", false, "use local ssh config '~/.ssh/config'")
+	SZ     = flag.String("sz", "", "send file by path")
+	RZ     = flag.String("rz", "", "download file by remote path")
+	Output = flag.String("o", "", "dest for send or get file,default:/root/sshwtmp")
+	NAME   = flag.String("n", "", "choose by node name")
 
 	log = sshw.GetLogger()
 
@@ -30,11 +34,14 @@ var (
 
 func findAlias(nodes []*sshw.Node, nodeAlias string) *sshw.Node {
 	for _, node := range nodes {
-		if node.Alias == nodeAlias {
+		if node.Name == nodeAlias {
 			return node
 		}
 		if len(node.Children) > 0 {
-			return findAlias(node.Children, nodeAlias)
+			n := findAlias(node.Children, nodeAlias)
+			if n != nil {
+				return n
+			}
 		}
 	}
 	return nil
@@ -72,25 +79,33 @@ func main() {
 		}
 	}
 
+	var client sshw.Client
 	// login by alias
-	if len(os.Args) > 1 {
-		var nodeAlias = os.Args[1]
+	if *NAME != "" {
+		var nodeAlias = *NAME
 		var nodes = sshw.GetConfig()
 		var node = findAlias(nodes, nodeAlias)
 		if node != nil {
-			client := sshw.NewClient(node)
-			client.Login()
-			return
+			client = sshw.NewClient(node)
+		} else {
+			log.Error("cannot find node by alias")
+			os.Exit(1)
 		}
+	} else {
+		node := choose(nil, sshw.GetConfig())
+		if node == nil {
+			log.Error("cannot get node")
+			os.Exit(1)
+		}
+		client = sshw.NewClient(node)
 	}
-
-	node := choose(nil, sshw.GetConfig())
-	if node == nil {
-		return
+	if *SZ != "" {
+		client.SendFile(*SZ, *Output)
+	} else if *RZ != "" {
+		client.GetFile(*RZ, *Output)
+	} else {
+		client.Shell()
 	}
-
-	client := sshw.NewClient(node)
-	client.Login()
 }
 
 func choose(parent, trees []*sshw.Node) *sshw.Node {
