@@ -2,7 +2,7 @@
 
 [![Build Status](https://travis-ci.org/yinheli/sshw.svg?branch=master)](https://travis-ci.org/yinheli/sshw)
 
-ssh client wrapper for automatic login.
+sshw with file transfer support.
 
 ![usage](./assets/sshw-demo.gif)
 
