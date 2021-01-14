@@ -4,6 +4,7 @@
 
 sshw with file transfer support.
 
+![usage](./assets/sshw-demo-file-transfer.jpg)
 ![usage](./assets/sshw-demo.gif)
 
 ## install
