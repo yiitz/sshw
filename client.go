@@ -147,6 +147,11 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 		destPath = "./sshwtmp"
 	}
 
+	if strings.HasSuffix(destPath, string(os.PathSeparator)) {
+		_, fn := path.Split(srcPath)
+		destPath += fn
+	}
+
 	// open an SFTP session over an existing ssh connection.
 	sftp, err := sftp.NewClient(client)
 	if err != nil {
@@ -197,6 +202,11 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 
 	if destPath == "" {
 		destPath = "/root/sshwtmp"
+	}
+
+	if strings.HasSuffix(destPath, "/") {
+		_, fn := path.Split(srcPath)
+		destPath += fn
 	}
 
 	// open an SFTP session over an existing ssh connection.
