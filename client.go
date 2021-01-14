@@ -134,6 +134,55 @@ func NewClient(node *Node) Client {
 }
 
 func (c *defaultClient) GetFile(srcPath string, destPath string) {
+	client := c.Connect()
+	if client == nil {
+		return
+	}
+	defer client.Close()
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	if destPath == "" {
+		destPath = "./sshwtmp"
+	}
+
+	// open an SFTP session over an existing ssh connection.
+	sftp, err := sftp.NewClient(client)
+	if err != nil {
+		l.Error(err)
+		return
+	}
+	defer sftp.Close()
+
+	// Open the source file
+	dstFile, err := os.Create(destPath)
+	if err != nil {
+		l.Error(err)
+		return
+	}
+	defer dstFile.Close()
+
+	// Create the destination file
+	srcFile, err := sftp.Open(srcPath)
+	if err != nil {
+		l.Error(err)
+		return
+	}
+	defer srcFile.Close()
+	fi, _ := srcFile.Stat()
+
+	progressR := &ioprogress.Reader{
+		Reader:       srcFile,
+		Size:         fi.Size(),
+		DrawFunc:     ioprogress.DrawTerminalf(os.Stdout, ioprogress.DrawTextFormatBytes),
+		DrawInterval: time.Second,
+	}
+
+	// Copy all of the reader to some local file f. As it copies, the
+	// progressR will write progress to the terminal on os.Stdout. This is
+	// customizable.
+	io.Copy(dstFile, progressR)
 }
 
 func (c *defaultClient) SendFile(srcPath string, destPath string) {

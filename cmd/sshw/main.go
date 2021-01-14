@@ -20,7 +20,7 @@ var (
 	S      = flag.Bool("s", false, "use local ssh config '~/.ssh/config'")
 	SZ     = flag.String("sz", "", "send file by path")
 	RZ     = flag.String("rz", "", "download file by remote path")
-	Output = flag.String("o", "", "dest for send or get file,default:/root/sshwtmp")
+	Output = flag.String("o", "", "dest for send or get file,default:/root/sshwtmp(for upload) or ./sshwtmp(for download)")
 	NAME   = flag.String("n", "", "choose by node name")
 
 	log = sshw.GetLogger()
