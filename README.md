@@ -1,5 +1,14 @@
 # sshw
 
+ssh client wrapper for automatic login.
+
+## features
+
+- automatic login, support both sshw config and openssh config.
+- upload and download file, use sftp.
+- execute command and exit, like `bash -c "xxx"`.
+- support jump machine, your real ssh server does not need to expose the port.
+
 ```
 Usage of sshw:
   -c string
@@ -20,6 +29,7 @@ Usage of sshw:
 ```
 
 ![usage](./assets/sshw-demo-file-transfer.jpg)
+
 ![usage](./assets/sshw-demo.gif)
 
 ## install
