@@ -1,5 +1,7 @@
 # sshw
 
+![GitHub](https://img.shields.io/github/license/yiitz/sshw) ![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/yiitz/sshw)
+
 ssh client wrapper for automatic login.
 
 ![usage](./assets/sshw-demo-file-transfer.jpg)
