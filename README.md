@@ -2,6 +2,11 @@
 
 ssh client wrapper for automatic login.
 
+![usage](./assets/sshw-demo-file-transfer.jpg)
+
+![usage](./assets/sshw-demo.gif)
+
+
 ## features
 
 - automatic login, support both sshw config and openssh config.
@@ -27,11 +32,6 @@ Usage of sshw:
   -version
         show version
 ```
-
-![usage](./assets/sshw-demo-file-transfer.jpg)
-
-![usage](./assets/sshw-demo.gif)
-
 ## install
 
 use `go get`
