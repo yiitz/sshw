@@ -11,6 +11,8 @@ type Logger interface {
 	Infof(format string, args ...interface{})
 	Error(args ...interface{})
 	Errorf(format string, args ...interface{})
+	Fatal(args ...interface{})
+	Fatalf(format string, args ...interface{})
 }
 
 type logger struct{}
@@ -42,6 +44,16 @@ func (l *logger) Error(args ...interface{}) {
 
 func (l *logger) Errorf(format string, args ...interface{}) {
 	l.printlnf("[level]", format, args...)
+}
+
+func (l *logger) Fatal(args ...interface{}) {
+	l.println("[fatal]", args...)
+	os.Exit(1)
+}
+
+func (l *logger) Fatalf(format string, args ...interface{}) {
+	l.printlnf("[fatal]", format, args...)
+	os.Exit(1)
 }
 
 func (l *logger) println(level string, args ...interface{}) {

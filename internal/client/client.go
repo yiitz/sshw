@@ -155,7 +155,7 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	// open an SFTP session over an existing ssh connection.
 	sftp, err := sftp.NewClient(client)
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 	defer sftp.Close()
@@ -163,7 +163,7 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	// Open the source file
 	dstFile, err := os.Create(destPath)
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 	defer dstFile.Close()
@@ -171,7 +171,7 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	// Create the destination file
 	srcFile, err := sftp.Open(srcPath)
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 	defer srcFile.Close()
@@ -210,7 +210,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	// open an SFTP session over an existing ssh connection.
 	sftp, err := sftp.NewClient(client)
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 	defer sftp.Close()
@@ -218,7 +218,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	// Open the source file
 	srcFile, err := os.Open(srcPath)
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 	defer srcFile.Close()
@@ -227,7 +227,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	// Create the destination file
 	dstFile, err := sftp.Create(destPath)
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 	defer dstFile.Close()
@@ -254,7 +254,7 @@ func (c *defaultClient) Shell(cmd string) {
 
 	session, err := client.NewSession()
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 	defer session.Close()
@@ -262,14 +262,14 @@ func (c *defaultClient) Shell(cmd string) {
 	fd := int(os.Stdin.Fd())
 	state, err := terminal.MakeRaw(fd)
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 	defer terminal.Restore(fd, state)
 
 	w, h, err := terminal.GetSize(fd)
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 
@@ -281,7 +281,7 @@ func (c *defaultClient) Shell(cmd string) {
 
 	err = session.RequestPty("xterm", h, w, modes)
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 
@@ -289,13 +289,13 @@ func (c *defaultClient) Shell(cmd string) {
 	session.Stderr = os.Stderr
 	stdinPipe, err := session.StdinPipe()
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 
 	err = session.Shell()
 	if err != nil {
-		log.GetLogger().Error(err)
+		log.GetLogger().Fatal(err)
 		return
 	}
 

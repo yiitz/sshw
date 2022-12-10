@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"os"
 	"runtime"
 	"strings"
 
@@ -71,14 +70,12 @@ func main() {
 	if *S {
 		err := config.LoadSshConfig()
 		if err != nil {
-			logger.Error("load ssh config error", err)
-			os.Exit(1)
+			logger.Fatal("load ssh config error", err)
 		}
 	} else {
 		err := config.LoadConfig()
 		if err != nil {
-			logger.Error("load config error", err)
-			os.Exit(1)
+			logger.Fatal("load config error", err)
 		}
 	}
 
@@ -91,14 +88,12 @@ func main() {
 		if node != nil {
 			sshClient = client.NewClient(node)
 		} else {
-			logger.Error("cannot find node by alias")
-			os.Exit(1)
+			logger.Fatal("cannot find node by alias")
 		}
 	} else {
 		node := choose(nil, config.GetConfig())
 		if node == nil {
-			logger.Error("cannot get node")
-			os.Exit(1)
+			logger.Fatal("cannot get node")
 		}
 		sshClient = client.NewClient(node)
 	}
