@@ -146,13 +146,11 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	wg.Add(1)
 
 	if destPath == "" {
-		destPath = "./sshwtmp"
+		_, fn := path.Split(srcPath)
+		destPath = fn
 	}
 
-	if strings.HasSuffix(destPath, string(os.PathSeparator)) {
-		_, fn := path.Split(srcPath)
-		destPath += fn
-	}
+	fmt.Printf("get file %s to %s\n", srcPath, destPath)
 
 	// open an SFTP session over an existing ssh connection.
 	sftp, err := sftp.NewClient(client)
@@ -203,13 +201,11 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	wg.Add(1)
 
 	if destPath == "" {
-		destPath = "/root/sshwtmp"
+		_, fn := path.Split(srcPath)
+		destPath = fn
 	}
 
-	if strings.HasSuffix(destPath, "/") {
-		_, fn := path.Split(srcPath)
-		destPath += fn
-	}
+	fmt.Printf("send file %s to %s\n", srcPath, destPath)
 
 	// open an SFTP session over an existing ssh connection.
 	sftp, err := sftp.NewClient(client)

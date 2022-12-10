@@ -1,9 +1,0 @@
-language: go
-
-go:
-  - "1.17"
-
-install: true
-
-script:
-  - go run cmd/mage/mage.go -v clean fmt test pack

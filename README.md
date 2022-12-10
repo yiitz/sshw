@@ -1,8 +1,23 @@
 # sshw
 
-[![Build Status](https://travis-ci.org/yinheli/sshw.svg?branch=master)](https://travis-ci.org/yinheli/sshw)
-
-sshw with file transfer support.
+```
+Usage of sshw:
+  -c string
+        execute command and exit
+  -get string
+        download file remote path
+  -help
+        show help
+  -n string
+        choose by node name
+  -o string
+        file output path, default: ${cwd}/${fileName}
+  -put string
+        upload file local path
+  -s    use local ssh config '~/.ssh/config'
+  -version
+        show version
+```
 
 ![usage](./assets/sshw-demo-file-transfer.jpg)
 ![usage](./assets/sshw-demo.gif)
