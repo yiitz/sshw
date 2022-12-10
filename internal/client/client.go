@@ -148,6 +148,12 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	if destPath == "" {
 		_, fn := path.Split(srcPath)
 		destPath = fn
+	} else {
+		fi, err := os.Stat(destPath)
+		if err == nil && fi.IsDir() {
+			_, fn := path.Split(srcPath)
+			destPath = path.Join(destPath, fn)
+		}
 	}
 
 	fmt.Printf("get file %s to %s\n", srcPath, destPath)
@@ -200,13 +206,6 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
-	if destPath == "" {
-		_, fn := path.Split(srcPath)
-		destPath = fn
-	}
-
-	fmt.Printf("send file %s to %s\n", srcPath, destPath)
-
 	// open an SFTP session over an existing ssh connection.
 	sftp, err := sftp.NewClient(client)
 	if err != nil {
@@ -215,6 +214,19 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	}
 	defer sftp.Close()
 
+	if destPath == "" {
+		_, fn := path.Split(srcPath)
+		destPath = fn
+	} else {
+		fi, err := sftp.Stat(destPath)
+		if err == nil && fi.IsDir() {
+			_, fn := path.Split(srcPath)
+			destPath = path.Join(destPath, fn)
+		}
+	}
+
+	fmt.Printf("send file %s to %s\n", srcPath, destPath)
+
 	// Open the source file
 	srcFile, err := os.Open(srcPath)
 	if err != nil {
@@ -222,7 +234,6 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 		return
 	}
 	defer srcFile.Close()
-	fi, _ := os.Stat(srcPath)
 
 	// Create the destination file
 	dstFile, err := sftp.Create(destPath)
@@ -232,6 +243,11 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	}
 	defer dstFile.Close()
 
+	fi, err := os.Stat(srcPath)
+	if err != nil {
+		log.GetLogger().Fatal(err)
+		return
+	}
 	progressR := &ioprogress.Reader{
 		Reader:       srcFile,
 		Size:         fi.Size(),
