@@ -1,4 +1,4 @@
-module github.com/yinheli/sshw
+module github.com/yiitz/sshw
 
 go 1.15
 
@@ -15,6 +15,7 @@ require (
 	github.com/pelletier/go-toml v1.2.0 // indirect
 	github.com/pkg/sftp v1.12.0
 	golang.org/x/crypto v0.0.0-20200820211705-5c72a883971a
+	golang.org/x/sys v0.3.0 // indirect
 	gopkg.in/alecthomas/kingpin.v3-unstable v3.0.0-20180810215634-df19058c872c // indirect
 	gopkg.in/yaml.v2 v2.2.2
 )

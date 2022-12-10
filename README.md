@@ -12,10 +12,10 @@ sshw with file transfer support.
 use `go get`
 
 ```
-go get -u github.com/yinheli/sshw/cmd/sshw
+go get -u github.com/yiitz/sshw/cmd/sshw
 ```
 
-or download binary from [releases](//github.com/yinheli/sshw/releases).
+or download binary from [releases](//github.com/yiitz/sshw/releases).
 
 ## config
 

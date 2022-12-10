@@ -1,7 +1,6 @@
-package sshw
+package config
 
 import (
-	"fmt"
 	"io/ioutil"
 	"os"
 	"os/user"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/atrox/homedir"
 	"github.com/kevinburke/ssh_config"
+	"github.com/yiitz/sshw/pkg/log"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
 )
@@ -38,28 +38,28 @@ func (n *Node) String() string {
 	return n.Name
 }
 
-func (n *Node) user() string {
+func (n *Node) GetUser() string {
 	if n.User == "" {
 		return "root"
 	}
 	return n.User
 }
 
-func (n *Node) port() int {
+func (n *Node) GetPort() int {
 	if n.Port <= 0 {
 		return 22
 	}
 	return n.Port
 }
 
-func (n *Node) password() ssh.AuthMethod {
+func (n *Node) GetPassword() ssh.AuthMethod {
 	if n.Password == "" {
 		return nil
 	}
 	return ssh.Password(n.Password)
 }
 
-func (n *Node) alias() string {
+func (n *Node) GetAlias() string {
 	return n.Alias
 }
 
@@ -90,14 +90,14 @@ func LoadConfig() error {
 func LoadSshConfig() error {
 	u, err := user.Current()
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return nil
 	}
 	f, _ := os.Open(path.Join(u.HomeDir, ".ssh/config"))
 	cfg, _ := ssh_config.Decode(f)
 	var nc []*Node
 	for _, host := range cfg.Hosts {
-		alias := fmt.Sprintf("%s", host.Patterns[0])
+		alias := host.Patterns[0].String()
 		hostName, err := cfg.Get(alias, "HostName")
 		if err != nil {
 			return err

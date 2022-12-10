@@ -1,4 +1,4 @@
-package sshw
+package client
 
 import (
 	"bufio"
@@ -17,6 +17,8 @@ import (
 
 	"github.com/mitchellh/ioprogress"
 	"github.com/pkg/sftp"
+	"github.com/yiitz/sshw/internal/config"
+	"github.com/yiitz/sshw/pkg/log"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
 )
@@ -41,20 +43,20 @@ var (
 )
 
 type Client interface {
-	Shell()
+	Shell(cmd string)
 	SendFile(srcPath string, destPath string)
 	GetFile(srcPath string, destPath string)
 }
 
 type defaultClient struct {
 	clientConfig *ssh.ClientConfig
-	node         *Node
+	node         *config.Node
 }
 
-func genSSHConfig(node *Node) *defaultClient {
+func genSSHConfig(node *config.Node) *defaultClient {
 	u, err := user.Current()
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return nil
 	}
 
@@ -67,7 +69,7 @@ func genSSHConfig(node *Node) *defaultClient {
 		pemBytes, err = ioutil.ReadFile(node.KeyPath)
 	}
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 	} else {
 		var signer ssh.Signer
 		if node.Passphrase != "" {
@@ -76,13 +78,13 @@ func genSSHConfig(node *Node) *defaultClient {
 			signer, err = ssh.ParsePrivateKey(pemBytes)
 		}
 		if err != nil {
-			l.Error(err)
+			log.GetLogger().Error(err)
 		} else {
 			authMethods = append(authMethods, ssh.PublicKeys(signer))
 		}
 	}
 
-	password := node.password()
+	password := node.GetPassword()
 
 	if password != nil {
 		authMethods = append(authMethods, password)
@@ -114,7 +116,7 @@ func genSSHConfig(node *Node) *defaultClient {
 	}))
 
 	config := &ssh.ClientConfig{
-		User:            node.user(),
+		User:            node.GetUser(),
 		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         time.Second * 10,
@@ -129,7 +131,7 @@ func genSSHConfig(node *Node) *defaultClient {
 	}
 }
 
-func NewClient(node *Node) Client {
+func NewClient(node *config.Node) Client {
 	return genSSHConfig(node)
 }
 
@@ -155,7 +157,7 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	// open an SFTP session over an existing ssh connection.
 	sftp, err := sftp.NewClient(client)
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 	defer sftp.Close()
@@ -163,7 +165,7 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	// Open the source file
 	dstFile, err := os.Create(destPath)
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 	defer dstFile.Close()
@@ -171,7 +173,7 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	// Create the destination file
 	srcFile, err := sftp.Open(srcPath)
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 	defer srcFile.Close()
@@ -212,7 +214,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	// open an SFTP session over an existing ssh connection.
 	sftp, err := sftp.NewClient(client)
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 	defer sftp.Close()
@@ -220,7 +222,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	// Open the source file
 	srcFile, err := os.Open(srcPath)
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 	defer srcFile.Close()
@@ -229,7 +231,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	// Create the destination file
 	dstFile, err := sftp.Create(destPath)
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 	defer dstFile.Close()
@@ -247,7 +249,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	io.Copy(dstFile, progressR)
 }
 
-func (c *defaultClient) Shell() {
+func (c *defaultClient) Shell(cmd string) {
 	client := c.Connect()
 	if client == nil {
 		return
@@ -256,7 +258,7 @@ func (c *defaultClient) Shell() {
 
 	session, err := client.NewSession()
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 	defer session.Close()
@@ -264,14 +266,14 @@ func (c *defaultClient) Shell() {
 	fd := int(os.Stdin.Fd())
 	state, err := terminal.MakeRaw(fd)
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 	defer terminal.Restore(fd, state)
 
 	w, h, err := terminal.GetSize(fd)
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 
@@ -280,9 +282,10 @@ func (c *defaultClient) Shell() {
 		ssh.TTY_OP_ISPEED: 14400,
 		ssh.TTY_OP_OSPEED: 14400,
 	}
+
 	err = session.RequestPty("xterm", h, w, modes)
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 
@@ -290,13 +293,13 @@ func (c *defaultClient) Shell() {
 	session.Stderr = os.Stderr
 	stdinPipe, err := session.StdinPipe()
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 
 	err = session.Shell()
 	if err != nil {
-		l.Error(err)
+		log.GetLogger().Error(err)
 		return
 	}
 
@@ -307,10 +310,14 @@ func (c *defaultClient) Shell() {
 		stdinPipe.Write([]byte(shell.Cmd + "\r"))
 	}
 
+	if cmd != "" {
+		stdinPipe.Write([]byte(cmd + "\r" + "exit\r"))
+	}
+
 	// change stdin to user
 	go func() {
 		_, err = io.Copy(stdinPipe, os.Stdin)
-		l.Error(err)
+		log.GetLogger().Error(err)
 		session.Close()
 	}()
 
@@ -352,7 +359,7 @@ func (c *defaultClient) Shell() {
 
 func (c *defaultClient) Connect() *ssh.Client {
 	host := c.node.Host
-	port := strconv.Itoa(c.node.port())
+	port := strconv.Itoa(c.node.GetPort())
 	jNodes := c.node.Jump
 
 	var client *ssh.Client
@@ -360,19 +367,19 @@ func (c *defaultClient) Connect() *ssh.Client {
 	if len(jNodes) > 0 {
 		jNode := jNodes[0]
 		jc := genSSHConfig(jNode)
-		proxyClient, err := ssh.Dial("tcp", net.JoinHostPort(jNode.Host, strconv.Itoa(jNode.port())), jc.clientConfig)
+		proxyClient, err := ssh.Dial("tcp", net.JoinHostPort(jNode.Host, strconv.Itoa(jNode.GetPort())), jc.clientConfig)
 		if err != nil {
-			l.Error(err)
+			log.GetLogger().Error(err)
 			return nil
 		}
 		conn, err := proxyClient.Dial("tcp", net.JoinHostPort(host, port))
 		if err != nil {
-			l.Error(err)
+			log.GetLogger().Error(err)
 			return nil
 		}
 		ncc, chans, reqs, err := ssh.NewClientConn(conn, net.JoinHostPort(host, port), c.clientConfig)
 		if err != nil {
-			l.Error(err)
+			log.GetLogger().Error(err)
 			return nil
 		}
 		client = ssh.NewClient(ncc, chans, reqs)
@@ -397,10 +404,10 @@ func (c *defaultClient) Connect() *ssh.Client {
 			}
 		}
 		if err != nil {
-			l.Error(err)
+			log.GetLogger().Error(err)
 			return nil
 		}
 	}
-	l.Infof("connect server ssh -p %d %s@%s version: %s\n", c.node.port(), c.node.user(), host, string(client.ServerVersion()))
+	log.GetLogger().Infof("connect server ssh -p %d %s@%s version: %s\n", c.node.GetPort(), c.node.GetUser(), host, string(client.ServerVersion()))
 	return client
 }
