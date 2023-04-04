@@ -63,7 +63,9 @@ func genSSHConfig(node *config.Node) *defaultClient {
 	var authMethods []ssh.AuthMethod
 
 	var pemBytes []byte
-	if node.KeyPath == "" {
+	if node.KeyBytes != "" {
+		pemBytes = []byte(node.KeyBytes)
+	} else if node.KeyPath == "" {
 		pemBytes, err = ioutil.ReadFile(path.Join(u.HomeDir, ".ssh/id_rsa"))
 	} else {
 		pemBytes, err = ioutil.ReadFile(node.KeyPath)
