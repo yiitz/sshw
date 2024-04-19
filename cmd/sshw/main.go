@@ -20,8 +20,9 @@ var (
 	H      = flag.Bool("help", false, "show help")
 	CMD    = flag.String("c", "", "execute command and exit")
 	S      = flag.Bool("s", false, "use local ssh config '~/.ssh/config'")
-	SZ     = flag.String("put", "", "upload file local path")
-	RZ     = flag.String("get", "", "download file remote path")
+	SZ     = flag.String("put", "", "upload file with local path")
+	SZTEMP = flag.Bool("ut", false, "use temp file to upload file")
+	RZ     = flag.String("get", "", "download file with remote path")
 	Output = flag.String("o", "", "file output path, default: ${cwd}/${fileName}")
 	NAME   = flag.String("n", "", "choose by node name")
 
@@ -98,7 +99,7 @@ func main() {
 		sshClient = client.NewClient(node)
 	}
 	if *SZ != "" {
-		sshClient.SendFile(*SZ, *Output)
+		sshClient.SendFile(*SZ, *Output, *SZTEMP)
 	} else if *RZ != "" {
 		sshClient.GetFile(*RZ, *Output)
 	} else {

@@ -44,7 +44,7 @@ var (
 
 type Client interface {
 	Shell(cmd string)
-	SendFile(srcPath string, destPath string)
+	SendFile(srcPath string, destPath string, useTemp bool)
 	GetFile(srcPath string, destPath string)
 }
 
@@ -158,12 +158,12 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 		}
 	}
 
-	fmt.Printf("get file %s to %s\n", srcPath, destPath)
+	log.GetLogger().Infof("get file remote:%s -> local:%s", srcPath, destPath)
 
 	// open an SFTP session over an existing ssh connection.
 	sftp, err := sftp.NewClient(client)
 	if err != nil {
-		log.GetLogger().Fatal(err)
+		log.GetLogger().Fatal("sftp new client error", err)
 		return
 	}
 	defer sftp.Close()
@@ -171,7 +171,7 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	// Open the source file
 	dstFile, err := os.Create(destPath)
 	if err != nil {
-		log.GetLogger().Fatal(err)
+		log.GetLogger().Fatal("os create error", err)
 		return
 	}
 	defer dstFile.Close()
@@ -179,11 +179,15 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	// Create the destination file
 	srcFile, err := sftp.Open(srcPath)
 	if err != nil {
-		log.GetLogger().Fatal(err)
+		log.GetLogger().Fatal("sftp open error", err)
 		return
 	}
 	defer srcFile.Close()
-	fi, _ := srcFile.Stat()
+	fi, err := srcFile.Stat()
+	if err != nil {
+		log.GetLogger().Fatal("stat file error", err)
+		return
+	}
 
 	progressR := &ioprogress.Reader{
 		Reader:       srcFile,
@@ -195,10 +199,26 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	// Copy all of the reader to some local file f. As it copies, the
 	// progressR will write progress to the terminal on os.Stdout. This is
 	// customizable.
-	io.Copy(dstFile, progressR)
+	n, err := io.Copy(dstFile, progressR)
+	if n != fi.Size() {
+		log.GetLogger().Fatalf("transfer file size not correct: %d", n)
+		return
+	}
+	if err != nil {
+		log.GetLogger().Fatal("io copy error", err)
+		return
+	}
 }
 
-func (c *defaultClient) SendFile(srcPath string, destPath string) {
+func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) {
+	var realDestPath string
+
+	defer func() {
+		if useTemp {
+			c.Shell(fmt.Sprintf(`mv "%s" "%s"`, destPath, realDestPath))
+		}
+	}()
+
 	client := c.Connect()
 	if client == nil {
 		return
@@ -211,7 +231,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	// open an SFTP session over an existing ssh connection.
 	sftp, err := sftp.NewClient(client)
 	if err != nil {
-		log.GetLogger().Fatal(err)
+		log.GetLogger().Fatal("sftp new client error", err)
 		return
 	}
 	defer sftp.Close()
@@ -227,7 +247,12 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 		}
 	}
 
-	fmt.Printf("send file %s to %s\n", srcPath, destPath)
+	if useTemp {
+		realDestPath = destPath
+		destPath += ".sshwtmp"
+	}
+
+	log.GetLogger().Infof("send file use-temp:%v local:%s -> remote:%s", useTemp, srcPath, destPath)
 
 	// Open the source file
 	srcFile, err := os.Open(srcPath)
@@ -240,14 +265,14 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	// Create the destination file
 	dstFile, err := sftp.Create(destPath)
 	if err != nil {
-		log.GetLogger().Fatal(err)
+		log.GetLogger().Fatal("sftp create error", err)
 		return
 	}
 	defer dstFile.Close()
 
 	fi, err := os.Stat(srcPath)
 	if err != nil {
-		log.GetLogger().Fatal(err)
+		log.GetLogger().Fatal("os stat error", err)
 		return
 	}
 	progressR := &ioprogress.Reader{
@@ -260,7 +285,15 @@ func (c *defaultClient) SendFile(srcPath string, destPath string) {
 	// Copy all of the reader to some local file f. As it copies, the
 	// progressR will write progress to the terminal on os.Stdout. This is
 	// customizable.
-	io.Copy(dstFile, progressR)
+	n, err := io.Copy(dstFile, progressR)
+	if n != fi.Size() {
+		log.GetLogger().Fatalf("transfer file size not correct: %d", n)
+		return
+	}
+	if err != nil {
+		log.GetLogger().Fatal("io copy error", err)
+		return
+	}
 }
 
 func (c *defaultClient) Shell(cmd string) {
