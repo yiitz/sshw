@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/user"
@@ -66,9 +65,12 @@ func genSSHConfig(node *config.Node) *defaultClient {
 	if node.KeyBytes != "" {
 		pemBytes = []byte(node.KeyBytes)
 	} else if node.KeyPath == "" {
-		pemBytes, err = ioutil.ReadFile(path.Join(u.HomeDir, ".ssh/id_rsa"))
+		pemBytes, err = os.ReadFile(path.Join(u.HomeDir, ".ssh/id_rsa"))
+		if err != nil {
+			pemBytes, err = os.ReadFile(path.Join(u.HomeDir, ".ssh/id_ed25519"))
+		}
 	} else {
-		pemBytes, err = ioutil.ReadFile(node.KeyPath)
+		pemBytes, err = os.ReadFile(node.KeyPath)
 	}
 	if err != nil {
 		log.GetLogger().Error(err)
