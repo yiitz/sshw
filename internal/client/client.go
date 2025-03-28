@@ -215,8 +215,9 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) {
 	var realDestPath string
 
+	moveTmp := useTemp
 	defer func() {
-		if useTemp {
+		if moveTmp {
 			c.Shell(fmt.Sprintf(`mv "%s" "%s"`, destPath, realDestPath))
 		}
 	}()
@@ -290,10 +291,12 @@ func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) 
 	n, err := io.Copy(dstFile, progressR)
 	if n != fi.Size() {
 		log.GetLogger().Fatalf("transfer file size not correct: %d", n)
+		moveTmp = false
 		return
 	}
 	if err != nil {
 		log.GetLogger().Fatal("io copy error", err)
+		moveTmp = false
 		return
 	}
 }
