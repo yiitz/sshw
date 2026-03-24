@@ -142,6 +142,7 @@ func NewClient(node *config.Node) Client {
 func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	client := c.Connect()
 	if client == nil {
+		log.GetLogger().Fatal("ssh new client nil")
 		return
 	}
 	defer client.Close()
@@ -224,6 +225,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) 
 
 	client := c.Connect()
 	if client == nil {
+		log.GetLogger().Fatal("ssh new client nil")
 		return
 	}
 	defer client.Close()
@@ -304,6 +306,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) 
 func (c *defaultClient) Shell(cmd string) {
 	client := c.Connect()
 	if client == nil {
+		log.GetLogger().Fatal("ssh new client nil")
 		return
 	}
 	defer client.Close()
