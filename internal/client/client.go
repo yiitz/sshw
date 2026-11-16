@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mitchellh/ioprogress"
 	"github.com/pkg/sftp"
+	"github.com/schollz/progressbar/v3"
 	"github.com/yiitz/sshw/internal/config"
 	"github.com/yiitz/sshw/pkg/log"
 	"golang.org/x/crypto/ssh"
@@ -192,17 +192,12 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 		return
 	}
 
-	progressR := &ioprogress.Reader{
-		Reader:       srcFile,
-		Size:         fi.Size(),
-		DrawFunc:     ioprogress.DrawTerminalf(os.Stdout, ioprogress.DrawTextFormatBytes),
-		DrawInterval: time.Second,
-	}
+	bar := progressbar.DefaultBytes(fi.Size(), "downloading")
 
 	// Copy all of the reader to some local file f. As it copies, the
 	// progressR will write progress to the terminal on os.Stdout. This is
 	// customizable.
-	n, err := io.Copy(dstFile, progressR)
+	n, err := io.Copy(io.MultiWriter(dstFile, bar), srcFile)
 	if n != fi.Size() {
 		log.GetLogger().Fatalf("transfer file size not correct: %d", n)
 		return
@@ -280,17 +275,13 @@ func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) 
 		log.GetLogger().Fatal("os stat error", err)
 		return
 	}
-	progressR := &ioprogress.Reader{
-		Reader:       srcFile,
-		Size:         fi.Size(),
-		DrawFunc:     ioprogress.DrawTerminalf(os.Stdout, ioprogress.DrawTextFormatBytes),
-		DrawInterval: time.Second,
-	}
+
+	bar := progressbar.DefaultBytes(fi.Size(), "uploading")
 
 	// Copy all of the reader to some local file f. As it copies, the
 	// progressR will write progress to the terminal on os.Stdout. This is
 	// customizable.
-	n, err := io.Copy(dstFile, progressR)
+	n, err := io.Copy(io.MultiWriter(dstFile, bar), srcFile)
 	if n != fi.Size() {
 		log.GetLogger().Fatalf("transfer file size not correct: %d", n)
 		moveTmp = false

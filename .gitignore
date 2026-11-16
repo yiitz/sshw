@@ -15,3 +15,6 @@
 # Misc
 /dist
 .idea
+
+# Build output
+/sshw

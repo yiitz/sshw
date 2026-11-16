@@ -1,7 +1,6 @@
 package config
 
 import (
-	"io/ioutil"
 	"os"
 	"os/user"
 	"path"
@@ -131,14 +130,14 @@ func LoadConfigBytes(names ...string) ([]byte, error) {
 	}
 	// homedir
 	for i := range names {
-		sshw, err := ioutil.ReadFile(path.Join(u.HomeDir, names[i]))
+		sshw, err := os.ReadFile(path.Join(u.HomeDir, names[i]))
 		if err == nil {
 			return sshw, nil
 		}
 	}
 	// relative
 	for i := range names {
-		sshw, err := ioutil.ReadFile(names[i])
+		sshw, err := os.ReadFile(names[i])
 		if err == nil {
 			return sshw, nil
 		}
