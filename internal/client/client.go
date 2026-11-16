@@ -19,7 +19,7 @@ import (
 	"github.com/yiitz/sshw/internal/config"
 	"github.com/yiitz/sshw/pkg/log"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 var (
@@ -108,7 +108,7 @@ func genSSHConfig(node *config.Node) *defaultClient {
 					return nil, err
 				}
 			} else {
-				b, err := terminal.ReadPassword(int(syscall.Stdin))
+				b, err := term.ReadPassword(int(syscall.Stdin))
 				if err != nil {
 					return nil, err
 				}
@@ -310,14 +310,14 @@ func (c *defaultClient) Shell(cmd string) {
 	defer session.Close()
 
 	fd := int(os.Stdin.Fd())
-	state, err := terminal.MakeRaw(fd)
+	state, err := term.MakeRaw(fd)
 	if err != nil {
 		log.GetLogger().Fatal(err)
 		return
 	}
-	defer terminal.Restore(fd, state)
+	defer term.Restore(fd, state)
 
-	w, h, err := terminal.GetSize(fd)
+	w, h, err := term.GetSize(fd)
 	if err != nil {
 		log.GetLogger().Fatal(err)
 		return
@@ -375,7 +375,7 @@ func (c *defaultClient) Shell(cmd string) {
 			oh = h
 		)
 		for {
-			cw, ch, err := terminal.GetSize(fd)
+			cw, ch, err := term.GetSize(fd)
 			if err != nil {
 				break
 			}
@@ -438,7 +438,7 @@ func (c *defaultClient) Connect() *ssh.Client {
 			if strings.Contains(msg, "no supported methods remain") && !strings.Contains(msg, "password") {
 				fmt.Printf("%s@%s's password:", c.clientConfig.User, host)
 				var b []byte
-				b, err = terminal.ReadPassword(int(syscall.Stdin))
+				b, err = term.ReadPassword(int(syscall.Stdin))
 				if err == nil {
 					p := string(b)
 					if p != "" {
