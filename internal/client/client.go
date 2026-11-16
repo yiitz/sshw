@@ -2,6 +2,7 @@ package client
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,7 +11,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +39,14 @@ var (
 		"aes192-cbc",
 		"aes256-cbc",
 	}
+)
+
+const (
+	// transferRetryMinWait is the delay before the first reconnect after a
+	// transfer is interrupted. The delay doubles after every failed attempt,
+	// up to transferRetryMaxWait.
+	transferRetryMinWait = 3 * time.Second
+	transferRetryMaxWait = 30 * time.Second
 )
 
 type Client interface {
@@ -139,17 +147,65 @@ func NewClient(node *config.Node) Client {
 	return genSSHConfig(node)
 }
 
-func (c *defaultClient) GetFile(srcPath string, destPath string) {
+// isPermanentTransferError reports errors that reconnecting will not fix,
+// such as a missing or inaccessible remote path.
+func isPermanentTransferError(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission)
+}
+
+// transferRetryDelay returns the exponential backoff before the given retry
+// attempt (1-based): transferRetryMinWait, doubled on every attempt, capped at
+// transferRetryMaxWait.
+func transferRetryDelay(attempt int) time.Duration {
+	delay := transferRetryMinWait
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay >= transferRetryMaxWait {
+			return transferRetryMaxWait
+		}
+	}
+	return delay
+}
+
+// newTransferBar returns a byte based progress bar using IEC units (KiB/MiB).
+// The option must be passed at construction time: progressbar formats the
+// total size once, when the bar is created, so applying OptionUseIECUnits
+// afterwards leaves the total in SI units (MB/GB).
+func newTransferBar(total int64, description string) *progressbar.ProgressBar {
+	return progressbar.NewOptions64(
+		total,
+		progressbar.OptionSetDescription(description),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionShowTotalBytes(true),
+		progressbar.OptionSetWidth(10),
+		progressbar.OptionThrottle(65*time.Millisecond),
+		progressbar.OptionShowCount(),
+		progressbar.OptionOnCompletion(func() {
+			fmt.Fprint(os.Stderr, "\n")
+		}),
+		progressbar.OptionSpinnerType(14),
+		progressbar.OptionFullWidth(),
+		progressbar.OptionSetRenderBlankState(true),
+		progressbar.OptionUseIECUnits(true),
+	)
+}
+
+// connectSFTP opens an ssh connection plus an sftp session on top of it.
+func (c *defaultClient) connectSFTP() (*ssh.Client, *sftp.Client, error) {
 	client := c.Connect()
 	if client == nil {
-		log.GetLogger().Fatal("ssh new client nil")
-		return
+		return nil, nil, fmt.Errorf("ssh connect to %s:%d failed", c.node.Host, c.node.GetPort())
 	}
-	defer client.Close()
+	sftpClient, err := sftp.NewClient(client)
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, err
+	}
+	return client, sftpClient, nil
+}
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
+func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	if destPath == "" {
 		_, fn := path.Split(srcPath)
 		destPath = fn
@@ -163,15 +219,8 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 
 	log.GetLogger().Infof("get file remote:%s -> local:%s", srcPath, destPath)
 
-	// open an SFTP session over an existing ssh connection.
-	sftp, err := sftp.NewClient(client)
-	if err != nil {
-		log.GetLogger().Fatal("sftp new client error", err)
-		return
-	}
-	defer sftp.Close()
-
-	// Open the source file
+	// Create the destination file. On a retry we keep using this handle and
+	// continue from its current size instead of truncating it again.
 	dstFile, err := os.Create(destPath)
 	if err != nil {
 		log.GetLogger().Fatal("os create error", err)
@@ -179,32 +228,120 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	}
 	defer dstFile.Close()
 
-	// Create the destination file
-	srcFile, err := sftp.Open(srcPath)
-	if err != nil {
-		log.GetLogger().Fatal("sftp open error", err)
-		return
+	var (
+		sshClient  *ssh.Client
+		sftpClient *sftp.Client
+		srcFile    *sftp.File
+		bar        *progressbar.ProgressBar
+		srcSize    int64
+		sizeKnown  bool
+		lastErr    error
+	)
+
+	// dropConnection releases the current session so the next attempt starts
+	// from a fresh connection. The client is closed first: that unblocks any
+	// pending request on a dead connection instead of waiting for a timeout.
+	dropConnection := func() {
+		if sftpClient != nil {
+			_ = sftpClient.Close()
+			sftpClient = nil
+		}
+		if srcFile != nil {
+			_ = srcFile.Close()
+			srcFile = nil
+		}
+		if sshClient != nil {
+			_ = sshClient.Close()
+			sshClient = nil
+		}
 	}
-	defer srcFile.Close()
-	fi, err := srcFile.Stat()
-	if err != nil {
-		log.GetLogger().Fatal("stat file error", err)
-		return
+	defer dropConnection()
+
+	fail := func(err error) {
+		dropConnection()
+		if bar != nil {
+			_ = bar.Clear()
+		}
+		log.GetLogger().Fatal("download failed: ", err)
 	}
 
-	bar := progressbar.DefaultBytes(fi.Size(), "downloading")
-	progressbar.OptionUseIECUnits(true)(bar)
+	for attempt := 0; ; attempt++ {
+		// The local file size is the authoritative resume point.
+		offset, err := dstFile.Seek(0, io.SeekEnd)
+		if err != nil {
+			log.GetLogger().Fatal("os seek error", err)
+			return
+		}
+		if sizeKnown && offset > srcSize {
+			// The local file is longer than the remote one, start over.
+			if err = dstFile.Truncate(0); err != nil {
+				log.GetLogger().Fatal("os truncate error", err)
+				return
+			}
+			offset = 0
+		}
 
-	// Copy all of the reader to some local file f. As it copies, the
-	// progressR will write progress to the terminal on os.Stdout. This is
-	// customizable.
-	n, err := io.Copy(io.MultiWriter(dstFile, bar), srcFile)
-	if n != fi.Size() {
-		log.GetLogger().Fatalf("transfer file size not correct: %d", n)
-		return
-	}
-	if err != nil {
-		log.GetLogger().Fatal("io copy error", err)
+		if attempt > 0 {
+			if bar != nil {
+				_ = bar.Clear()
+			}
+			delay := transferRetryDelay(attempt)
+			log.GetLogger().Errorf("download interrupted at %d/%d bytes: %v, reconnecting in %s (press Enter to reconnect now)",
+				offset, srcSize, lastErr, delay)
+			waitEnterOrTimeout(delay)
+		}
+
+		if sftpClient == nil {
+			sshClient, sftpClient, lastErr = c.connectSFTP()
+			if lastErr != nil {
+				continue
+			}
+		}
+
+		if srcFile == nil {
+			srcFile, lastErr = sftpClient.Open(srcPath)
+			if lastErr != nil {
+				if isPermanentTransferError(lastErr) {
+					fail(lastErr)
+				}
+				dropConnection()
+				continue
+			}
+			fi, statErr := srcFile.Stat()
+			if statErr != nil {
+				if isPermanentTransferError(statErr) {
+					fail(statErr)
+				}
+				dropConnection()
+				lastErr = statErr
+				continue
+			}
+			if bar == nil {
+				srcSize = fi.Size()
+				sizeKnown = true
+				bar = newTransferBar(srcSize, "downloading")
+			}
+		}
+
+		if _, err = srcFile.Seek(offset, io.SeekStart); err != nil {
+			dropConnection()
+			lastErr = err
+			continue
+		}
+		_ = bar.Set64(offset)
+
+		n, err := io.Copy(io.MultiWriter(dstFile, bar), srcFile)
+		if err != nil {
+			dropConnection()
+			lastErr = err
+			continue
+		}
+		offset += n
+		if offset != srcSize {
+			dropConnection()
+			lastErr = fmt.Errorf("transfer file size not correct: %d", offset)
+			continue
+		}
 		return
 	}
 }
@@ -212,48 +349,18 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) {
 	var realDestPath string
 
-	moveTmp := useTemp
-	defer func() {
-		if moveTmp {
-			c.Shell(fmt.Sprintf(`mv "%s" "%s"`, destPath, realDestPath))
-		}
-	}()
-
-	client := c.Connect()
-	if client == nil {
-		log.GetLogger().Fatal("ssh new client nil")
-		return
-	}
-	defer client.Close()
-
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	// open an SFTP session over an existing ssh connection.
-	sftp, err := sftp.NewClient(client)
-	if err != nil {
-		log.GetLogger().Fatal("sftp new client error", err)
-		return
-	}
-	defer sftp.Close()
-
-	if destPath == "" {
-		_, fn := path.Split(srcPath)
-		destPath = fn
-	} else {
-		fi, err := sftp.Stat(destPath)
-		if err == nil && fi.IsDir() {
-			_, fn := path.Split(srcPath)
-			destPath = path.Join(destPath, fn)
-		}
-	}
-
 	if useTemp {
-		realDestPath = destPath
-		destPath += ".sshwtmp"
+		defer func() {
+			c.Shell(fmt.Sprintf(`mv "%s" "%s"`, destPath, realDestPath))
+		}()
 	}
 
-	log.GetLogger().Infof("send file use-temp:%v local:%s -> remote:%s", useTemp, srcPath, destPath)
+	fi, err := os.Stat(srcPath)
+	if err != nil {
+		log.GetLogger().Fatal("os stat error", err)
+		return
+	}
+	total := fi.Size()
 
 	// Open the source file
 	srcFile, err := os.Open(srcPath)
@@ -263,35 +370,135 @@ func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) 
 	}
 	defer srcFile.Close()
 
-	// Create the destination file
-	dstFile, err := sftp.Create(destPath)
-	if err != nil {
-		log.GetLogger().Fatal("sftp create error", err)
-		return
-	}
-	defer dstFile.Close()
+	bar := newTransferBar(total, "uploading")
 
-	fi, err := os.Stat(srcPath)
-	if err != nil {
-		log.GetLogger().Fatal("os stat error", err)
-		return
+	var (
+		sshClient  *ssh.Client
+		sftpClient *sftp.Client
+		dstFile    *sftp.File
+		resolved   bool
+		opened     bool
+		sent       int64
+		lastErr    error
+	)
+
+	// dropConnection releases the current session so the next attempt starts
+	// from a fresh connection. The client is closed first: that unblocks any
+	// pending request on a dead connection instead of waiting for a timeout.
+	dropConnection := func() {
+		if sftpClient != nil {
+			_ = sftpClient.Close()
+			sftpClient = nil
+		}
+		if dstFile != nil {
+			_ = dstFile.Close()
+			dstFile = nil
+		}
+		if sshClient != nil {
+			_ = sshClient.Close()
+			sshClient = nil
+		}
+	}
+	defer dropConnection()
+
+	fail := func(err error) {
+		dropConnection()
+		_ = bar.Clear()
+		log.GetLogger().Fatal("upload failed: ", err)
 	}
 
-	bar := progressbar.DefaultBytes(fi.Size(), "uploading")
-	progressbar.OptionUseIECUnits(true)(bar)
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			_ = bar.Clear()
+			delay := transferRetryDelay(attempt)
+			log.GetLogger().Errorf("upload interrupted at %d/%d bytes: %v, reconnecting in %s (press Enter to reconnect now)",
+				sent, total, lastErr, delay)
+			waitEnterOrTimeout(delay)
+		}
 
-	// Copy all of the reader to some local file f. As it copies, the
-	// progressR will write progress to the terminal on os.Stdout. This is
-	// customizable.
-	n, err := io.Copy(io.MultiWriter(dstFile, bar), srcFile)
-	if n != fi.Size() {
-		log.GetLogger().Fatalf("transfer file size not correct: %d", n)
-		moveTmp = false
-		return
-	}
-	if err != nil {
-		log.GetLogger().Fatal("io copy error", err)
-		moveTmp = false
+		if sftpClient == nil {
+			sshClient, sftpClient, lastErr = c.connectSFTP()
+			if lastErr != nil {
+				continue
+			}
+		}
+
+		if !resolved {
+			if destPath == "" {
+				_, destPath = path.Split(srcPath)
+			} else if st, statErr := sftpClient.Stat(destPath); statErr == nil && st.IsDir() {
+				_, fn := path.Split(srcPath)
+				destPath = path.Join(destPath, fn)
+			} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+				if isPermanentTransferError(statErr) {
+					fail(statErr)
+				}
+				dropConnection()
+				lastErr = statErr
+				continue
+			}
+			if useTemp {
+				realDestPath = destPath
+				destPath += ".sshwtmp"
+			}
+			log.GetLogger().Infof("send file use-temp:%v local:%s -> remote:%s", useTemp, srcPath, destPath)
+			resolved = true
+		}
+
+		if dstFile == nil {
+			if !opened {
+				// First attempt: truncate any existing file, like before.
+				dstFile, lastErr = sftpClient.Create(destPath)
+			} else {
+				// Retry: keep what was already written and resume from there.
+				dstFile, lastErr = sftpClient.OpenFile(destPath, os.O_WRONLY|os.O_CREATE)
+			}
+			if lastErr != nil {
+				if isPermanentTransferError(lastErr) {
+					fail(lastErr)
+				}
+				dropConnection()
+				continue
+			}
+			opened = true
+		}
+
+		// The remote file size is the authoritative resume point.
+		offset, err := dstFile.Seek(0, io.SeekEnd)
+		if err != nil {
+			dropConnection()
+			lastErr = err
+			continue
+		}
+		if offset > total {
+			if err = dstFile.Truncate(0); err != nil {
+				dropConnection()
+				lastErr = err
+				continue
+			}
+			offset = 0
+		}
+		sent = offset
+
+		if _, err = srcFile.Seek(offset, io.SeekStart); err != nil {
+			log.GetLogger().Fatal("os seek error", err)
+			return
+		}
+		_ = bar.Set64(offset)
+
+		n, err := io.Copy(io.MultiWriter(dstFile, bar), srcFile)
+		if err != nil {
+			dropConnection()
+			lastErr = err
+			continue
+		}
+		offset += n
+		sent = offset
+		if offset != total {
+			dropConnection()
+			lastErr = fmt.Errorf("transfer file size not correct: %d", offset)
+			continue
+		}
 		return
 	}
 }
