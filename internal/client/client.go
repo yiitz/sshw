@@ -193,6 +193,7 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 	}
 
 	bar := progressbar.DefaultBytes(fi.Size(), "downloading")
+	progressbar.OptionUseIECUnits(true)(bar)
 
 	// Copy all of the reader to some local file f. As it copies, the
 	// progressR will write progress to the terminal on os.Stdout. This is
@@ -277,6 +278,7 @@ func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) 
 	}
 
 	bar := progressbar.DefaultBytes(fi.Size(), "uploading")
+	progressbar.OptionUseIECUnits(true)(bar)
 
 	// Copy all of the reader to some local file f. As it copies, the
 	// progressR will write progress to the terminal on os.Stdout. This is
