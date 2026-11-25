@@ -171,7 +171,12 @@ func transferRetryDelay(attempt int) time.Duration {
 // The option must be passed at construction time: progressbar formats the
 // total size once, when the bar is created, so applying OptionUseIECUnits
 // afterwards leaves the total in SI units (MB/GB).
+//
+// A nil bar is returned for an empty file: progressbar rejects a max of 0.
 func newTransferBar(total int64, description string) *progressbar.ProgressBar {
+	if total <= 0 {
+		return nil
+	}
 	return progressbar.NewOptions64(
 		total,
 		progressbar.OptionSetDescription(description),
@@ -189,6 +194,21 @@ func newTransferBar(total int64, description string) *progressbar.ProgressBar {
 		progressbar.OptionSetRenderBlankState(true),
 		progressbar.OptionUseIECUnits(true),
 	)
+}
+
+// progressWriter reports transferred bytes to the progress bar. Reporting is
+// best-effort: progressbar returns an error once the bar is full, and a file
+// that grew after its size was measured (a busy log file, for example) must
+// not abort the transfer.
+type progressWriter struct {
+	bar *progressbar.ProgressBar
+}
+
+func (w *progressWriter) Write(p []byte) (int, error) {
+	if w.bar != nil {
+		_ = w.bar.Add(len(p))
+	}
+	return len(p), nil
 }
 
 // connectSFTP opens an ssh connection plus an sftp session on top of it.
@@ -234,7 +254,6 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 		srcFile    *sftp.File
 		bar        *progressbar.ProgressBar
 		srcSize    int64
-		sizeKnown  bool
 		lastErr    error
 	)
 
@@ -272,14 +291,6 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 			log.GetLogger().Fatal("os seek error", err)
 			return
 		}
-		if sizeKnown && offset > srcSize {
-			// The local file is longer than the remote one, start over.
-			if err = dstFile.Truncate(0); err != nil {
-				log.GetLogger().Fatal("os truncate error", err)
-				return
-			}
-			offset = 0
-		}
 
 		if attempt > 0 {
 			if bar != nil {
@@ -307,20 +318,49 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 				dropConnection()
 				continue
 			}
-			fi, statErr := srcFile.Stat()
-			if statErr != nil {
-				if isPermanentTransferError(statErr) {
-					fail(statErr)
-				}
-				dropConnection()
-				lastErr = statErr
-				continue
+		}
+
+		// Stat on every attempt rather than once on open: a growing file (a
+		// live log, for example) may be larger now than on the previous
+		// attempt, and the size decides both the resume point and the
+		// progress bar total.
+		fi, statErr := srcFile.Stat()
+		if statErr != nil {
+			if isPermanentTransferError(statErr) {
+				fail(statErr)
 			}
-			if bar == nil {
-				srcSize = fi.Size()
-				sizeKnown = true
-				bar = newTransferBar(srcSize, "downloading")
+			dropConnection()
+			lastErr = statErr
+			continue
+		}
+		srcSize = fi.Size()
+
+		if offset > srcSize {
+			// The local file is longer than the remote one, so the remote file
+			// was truncated or replaced: start over.
+			if err = dstFile.Truncate(0); err != nil {
+				log.GetLogger().Fatal("os truncate error", err)
+				return
 			}
+			// Truncate leaves the current offset alone; without this seek the
+			// next write would land at the old end and recreate a sparse file.
+			if _, err = dstFile.Seek(0, io.SeekStart); err != nil {
+				log.GetLogger().Fatal("os seek error", err)
+				return
+			}
+			offset = 0
+		}
+
+		// Recreate the bar when the remote size changed: the previous bar may
+		// already be full and cannot follow a larger file.
+		if bar == nil || bar.GetMax64() != srcSize {
+			if bar != nil {
+				_ = bar.Clear()
+			}
+			bar = newTransferBar(srcSize, "downloading")
+		}
+		if bar != nil {
+			_ = bar.Set64(offset)
 		}
 
 		if _, err = srcFile.Seek(offset, io.SeekStart); err != nil {
@@ -328,19 +368,23 @@ func (c *defaultClient) GetFile(srcPath string, destPath string) {
 			lastErr = err
 			continue
 		}
-		_ = bar.Set64(offset)
 
-		n, err := io.Copy(io.MultiWriter(dstFile, bar), srcFile)
+		n, err := io.Copy(io.MultiWriter(dstFile, &progressWriter{bar: bar}), srcFile)
 		if err != nil {
 			dropConnection()
 			lastErr = err
 			continue
 		}
 		offset += n
-		if offset != srcSize {
+		// Everything the remote file had when the attempt started must have
+		// been read; going past that is fine, the file grew meanwhile.
+		if offset < srcSize {
 			dropConnection()
-			lastErr = fmt.Errorf("transfer file size not correct: %d", offset)
+			lastErr = fmt.Errorf("transfer file size not correct: %d < %d", offset, srcSize)
 			continue
+		}
+		if bar != nil {
+			_ = bar.Finish()
 		}
 		return
 	}
@@ -403,13 +447,17 @@ func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) 
 
 	fail := func(err error) {
 		dropConnection()
-		_ = bar.Clear()
+		if bar != nil {
+			_ = bar.Clear()
+		}
 		log.GetLogger().Fatal("upload failed: ", err)
 	}
 
 	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
-			_ = bar.Clear()
+			if bar != nil {
+				_ = bar.Clear()
+			}
 			delay := transferRetryDelay(attempt)
 			log.GetLogger().Errorf("upload interrupted at %d/%d bytes: %v, reconnecting in %s (press Enter to reconnect now)",
 				sent, total, lastErr, delay)
@@ -476,6 +524,14 @@ func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) 
 				lastErr = err
 				continue
 			}
+			// sftp.File.Truncate keeps its write offset; without this seek the
+			// next write would land at the old end and make the remote file
+			// sparse.
+			if _, err = dstFile.Seek(0, io.SeekStart); err != nil {
+				dropConnection()
+				lastErr = err
+				continue
+			}
 			offset = 0
 		}
 		sent = offset
@@ -484,9 +540,11 @@ func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) 
 			log.GetLogger().Fatal("os seek error", err)
 			return
 		}
-		_ = bar.Set64(offset)
+		if bar != nil {
+			_ = bar.Set64(offset)
+		}
 
-		n, err := io.Copy(io.MultiWriter(dstFile, bar), srcFile)
+		n, err := io.Copy(io.MultiWriter(dstFile, &progressWriter{bar: bar}), srcFile)
 		if err != nil {
 			dropConnection()
 			lastErr = err
@@ -494,10 +552,15 @@ func (c *defaultClient) SendFile(srcPath string, destPath string, useTemp bool) 
 		}
 		offset += n
 		sent = offset
-		if offset != total {
+		// Everything the local file had when the transfer started must have
+		// been sent; going past that is fine, the file grew meanwhile.
+		if offset < total {
 			dropConnection()
-			lastErr = fmt.Errorf("transfer file size not correct: %d", offset)
+			lastErr = fmt.Errorf("transfer file size not correct: %d < %d", offset, total)
 			continue
+		}
+		if bar != nil {
+			_ = bar.Finish()
 		}
 		return
 	}
