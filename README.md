@@ -15,6 +15,7 @@ ssh client wrapper for automatic login.
 - upload and download file, use sftp.
 - execute command and exit, like `bash -c "xxx"`.
 - support jump machine, your real ssh server does not need to expose the port.
+- verify host keys against `~/.ssh/known_hosts`: unknown hosts ask for confirmation like OpenSSH, changed keys are rejected.
 
 ```
 Usage of sshw:

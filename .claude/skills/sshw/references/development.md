@@ -52,7 +52,8 @@ go test ./...
 
 - 私钥顺序：`KeyBytes` > `KeyPath` > `~/.ssh/id_rsa` → `~/.ssh/id_ed25519`；解析失败只记日志，继续尝试其他认证方式。
 - 认证方法顺序：公钥、密码（若有）、keyboard-interactive（始终最后追加）。
-- `HostKeyCallback` 是 `ssh.InsecureIgnoreHostKey()`；`Ciphers` 在 `SetDefaults()` 后追加了一批旧算法。
+- `HostKeyCallback` 由 `newHostKeyCallback()`（`internal/client/hostkey.go`）提供，按 `~/.ssh/known_hosts` 校验：已记录的主机必须匹配，未知主机交互确认后追加（TOFU），密钥变化拒绝，非 TTY 下未知主机直接失败。
+- `Ciphers` 在 `SetDefaults()` 后追加了一批旧算法。
 - `jump` 只取第一个跳板机，先拨号跳板机，再通过它 `Dial` 目标；跳板机节点自身的 `jump` 不递归。
 - 终端补输密码的回退只发生在直连路径，且错误需包含 `no supported methods remain` 且不含 `password`。
 - `Shell`：`term.MakeRaw` + PTY（xterm），每秒轮询窗口大小，每 10 秒发 `keepalive@openssh.com`；先发送 `callback-shells`，再发送 `-c` 的 `cmd\r` 与 `exit\r`；`session.Wait()` 的返回值被忽略。

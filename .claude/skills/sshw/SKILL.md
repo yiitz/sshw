@@ -60,7 +60,7 @@ flag 是 Go 标准库 `flag` 风格：`-put path`、`-put=path`、`--put path` �
 - 私钥优先级：`keybytes` > `keypath` > 默认 `~/.ssh/id_rsa`，读不到再试 `~/.ssh/id_ed25519`。
 - 配置了 `password` 会追加密码认证；始终追加 keyboard-interactive，用于 OTP/二次验证等交互问题。
 - 直连认证失败且错误包含 `no supported methods remain` 时，会在终端提示输入密码再试一次。
-- 主机密钥校验被禁用（`ssh.InsecureIgnoreHostKey`），并启用了部分旧加密算法；只在可信网络使用。
+- 主机密钥按 `~/.ssh/known_hosts` 校验：已记录的主机必须匹配；未知主机在终端提示指纹、输入 `yes` 后写入（TOFU）；密钥变化直接拒绝，非 TTY 下未知主机会失败。仍启用了部分旧加密算法。
 - YAML 中的 `keypath` **不做 `~` 展开**（`-s` 模式的 `IdentityFile` 会展开），请写绝对路径。
 
 ### 配置
